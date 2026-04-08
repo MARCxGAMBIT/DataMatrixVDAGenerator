@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Data Matrix VDA Generator</title>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f0f2f5;
+      margin: 0;
+      padding: 24px;
+      color: #1a1a2e;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 1.8rem;
+      margin-bottom: 8px;
+      color: #0d47a1;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #555;
+      font-size: 0.9rem;
+      margin-bottom: 32px;
+    }
+
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 28px 32px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      margin-bottom: 24px;
+    }
+
+    .card h2 {
+      margin-top: 0;
+      font-size: 1.1rem;
+      color: #333;
+      border-bottom: 2px solid #e3eaf5;
+      padding-bottom: 10px;
+      margin-bottom: 20px;
+    }
+
+    .fields-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 600px) {
+      .fields-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .field-group label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #555;
+      letter-spacing: 0.03em;
+    }
+
+    .field-group .prefix-badge {
+      display: inline-block;
+      background: #e3eaf5;
+      color: #0d47a1;
+      font-size: 0.75rem;
+      font-weight: 700;
+      border-radius: 4px;
+      padding: 1px 6px;
+      margin-left: 6px;
+      font-family: monospace;
+    }
+
+    .field-group input {
+      padding: 9px 12px;
+      border: 1.5px solid #d0d7e3;
+      border-radius: 7px;
+      font-size: 0.95rem;
+      transition: border-color 0.2s;
+      outline: none;
+    }
+
+    .field-group input:focus {
+      border-color: #1565c0;
+      box-shadow: 0 0 0 3px rgba(21,101,192,0.12);
+    }
+
+    .btn-generate {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      background: #1565c0;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 20px;
+      transition: background 0.2s;
+    }
+
+    .btn-generate:hover {
+      background: #0d47a1;
+    }
+
+    .btn-generate:active {
+      background: #0a3880;
+    }
+
+    .result-area {
+      display: none;
+    }
+
+    .result-area.visible {
+      display: block;
+    }
+
+    .barcode-wrapper {
+      display: flex;
+      justify-content: center;
+      padding: 16px 0;
+    }
+
+    #barcode-canvas {
+      image-rendering: pixelated;
+    }
+
+    .encoded-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #555;
+      margin-bottom: 6px;
+    }
+
+    .encoded-string {
+      background: #f4f6fb;
+      border: 1.5px solid #d0d7e3;
+      border-radius: 7px;
+      padding: 10px 14px;
+      font-family: monospace;
+      font-size: 0.88rem;
+      word-break: break-all;
+      color: #222;
+      position: relative;
+    }
+
+    .encoded-string .ctrl-char {
+      display: inline-block;
+      background: #fce4ec;
+      color: #b71c1c;
+      border-radius: 3px;
+      padding: 0 4px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      margin: 0 1px;
+      vertical-align: middle;
+    }
+
+    .copy-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .btn-copy {
+      padding: 6px 16px;
+      background: #e3eaf5;
+      color: #1565c0;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-copy:hover {
+      background: #c7d8f5;
+    }
+
+    .copy-feedback {
+      font-size: 0.82rem;
+      color: #2e7d32;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .copy-feedback.show {
+      opacity: 1;
+    }
+
+    .table-ref {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    .table-ref th {
+      background: #e3eaf5;
+      color: #333;
+      text-align: left;
+      padding: 7px 10px;
+      font-weight: 600;
+    }
+
+    .table-ref td {
+      padding: 7px 10px;
+      border-bottom: 1px solid #f0f2f5;
+      font-family: monospace;
+    }
+
+    .table-ref tr:last-child td {
+      border-bottom: none;
+    }
+
+    .alert-error {
+      background: #fce4ec;
+      border: 1px solid #f48fb1;
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: #880e4f;
+      font-size: 0.9rem;
+      display: none;
+    }
+
+    .alert-error.visible {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Data Matrix VDA Generator</h1>
+  <p class="subtitle">Generates ISO&nbsp;15434 compliant Data Matrix (ECC&nbsp;200) codes for VDA labels</p>
+
+  <!-- Input form -->
+  <div class="card">
+    <h2>Label Fields</h2>
+    <div class="fields-grid">
+      <div class="field-group">
+        <label>Part Number <span class="prefix-badge">P</span></label>
+        <input type="text" id="f-matnr" placeholder="e.g. 123456" />
+      </div>
+      <div class="field-group">
+        <label>Revision <span class="prefix-badge">2P</span></label>
+        <input type="text" id="f-revision" placeholder="e.g. A1" />
+      </div>
+      <div class="field-group">
+        <label>Serial Number <span class="prefix-badge">S</span></label>
+        <input type="text" id="f-serial" placeholder="e.g. SN-00042" />
+      </div>
+      <div class="field-group">
+        <label>Supplier <span class="prefix-badge">V</span></label>
+        <input type="text" id="f-supplier" placeholder="e.g. SUP001" />
+      </div>
+      <div class="field-group">
+        <label>Charge / Lot Number <span class="prefix-badge">1T</span></label>
+        <input type="text" id="f-charge" placeholder="e.g. LOT2024" />
+      </div>
+      <div class="field-group">
+        <label>Ident Number <span class="prefix-badge">1P</span></label>
+        <input type="text" id="f-ident" placeholder="e.g. IDENT99" />
+      </div>
+      <div class="field-group">
+        <label>Order Number <span class="prefix-badge">K</span></label>
+        <input type="text" id="f-order" placeholder="e.g. ORD-2024-001" />
+      </div>
+    </div>
+
+    <div id="error-msg" class="alert-error"></div>
+    <button class="btn-generate" onclick="generate()">Generate Data Matrix Code</button>
+  </div>
+
+  <!-- Result -->
+  <div class="card result-area" id="result-card">
+    <h2>Generated Code</h2>
+    <div class="barcode-wrapper">
+      <canvas id="barcode-canvas"></canvas>
+    </div>
+    <div class="encoded-label">Encoded content (ISO 15434):</div>
+    <div class="encoded-string" id="encoded-display"></div>
+    <div class="copy-row">
+      <button class="btn-copy" onclick="copyRaw()">Copy raw string</button>
+      <button class="btn-copy" onclick="downloadPNG()">Download PNG</button>
+      <span class="copy-feedback" id="copy-feedback">Copied!</span>
+    </div>
+  </div>
+
+  <!-- Reference table -->
+  <div class="card">
+    <h2>ISO 15434 Structure Reference</h2>
+    <table class="table-ref">
+      <thead>
+        <tr>
+          <th>Segment</th>
+          <th>Prefix</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>[)&gt;&#x241E;06</code></td><td>—</td><td>Start sequence (mandatory)</td></tr>
+        <tr><td><code>&#x241D;P…</code></td><td>P</td><td>Part Number (Materialnummer)</td></tr>
+        <tr><td><code>&#x241D;2P…</code></td><td>2P</td><td>Revision</td></tr>
+        <tr><td><code>&#x241D;S…</code></td><td>S</td><td>Serial Number</td></tr>
+        <tr><td><code>&#x241D;V…</code></td><td>V</td><td>Supplier</td></tr>
+        <tr><td><code>&#x241D;1T…</code></td><td>1T</td><td>Charge / Lot Number</td></tr>
+        <tr><td><code>&#x241D;1P…</code></td><td>1P</td><td>Ident Number</td></tr>
+        <tr><td><code>&#x241D;K…</code></td><td>K</td><td>Order Number</td></tr>
+        <tr><td><code>&#x241E;&#x2404;</code></td><td>—</td><td>End sequence (mandatory)</td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:0.8rem;color:#777;margin-top:12px;">
+      <strong>Special characters:</strong>
+      GS&nbsp;=&nbsp;ASCII&nbsp;29&nbsp;(0x1D&nbsp;|&nbsp;&#x241D;) &nbsp;·&nbsp;
+      RS&nbsp;=&nbsp;ASCII&nbsp;30&nbsp;(0x1E&nbsp;|&nbsp;&#x241E;) &nbsp;·&nbsp;
+      EOT&nbsp;=&nbsp;ASCII&nbsp;4&nbsp;(0x04&nbsp;|&nbsp;&#x2404;)
+    </p>
+  </div>
+</div>
+
+<!-- bwip-js: full-featured barcode / data matrix renderer -->
+<script src="bwip-js-min.js"></script>
+<script>
+  // Special control characters as per ISO 15434
+  const GS  = '\x1D'; // ASCII 29 – Group Separator
+  const RS  = '\x1E'; // ASCII 30 – Record Separator
+  const EOT = '\x04'; // ASCII  4 – End of Transmission
+
+  // Raw encoded string (stored for clipboard copy)
+  let rawEncodedString = '';
+
+  /**
+   * Build an ISO 15434 message from the provided field values.
+   * Only non-empty fields are included.
+   * Format: [)>RS06 GS P{matnr} GS 2P{rev} GS S{ser} GS V{sup} GS 1T{chg} GS 1P{ident} GS K{ord} RS EOT
+   */
+  function buildISO15434(fields) {
+    const dataSegments = [];
+
+    if (fields.matnr)    dataSegments.push('P'  + fields.matnr);
+    if (fields.revision) dataSegments.push('2P' + fields.revision);
+    if (fields.serial)   dataSegments.push('S'  + fields.serial);
+    if (fields.supplier) dataSegments.push('V'  + fields.supplier);
+    if (fields.charge)   dataSegments.push('1T' + fields.charge);
+    if (fields.ident)    dataSegments.push('1P' + fields.ident);
+    if (fields.order)    dataSegments.push('K'  + fields.order);
+
+    if (dataSegments.length === 0) {
+      throw new Error('Please fill in at least one field.');
+    }
+
+    // Header + 06 format indicator, data fields separated by GS, footer
+    return '[)>' + RS + '06' + GS + dataSegments.join(GS) + RS + EOT;
+  }
+
+  /**
+   * Render the encoded string in the display element with highlighted
+   * control characters so users can visually verify the structure.
+   */
+  function renderDisplayString(encoded) {
+    const el = document.getElementById('encoded-display');
+    let html = '';
+    for (const ch of encoded) {
+      const code = ch.charCodeAt(0);
+      if (code === 0x1D) {
+        html += '<span class="ctrl-char" title="GS (0x1D)">GS</span>';
+      } else if (code === 0x1E) {
+        html += '<span class="ctrl-char" title="RS (0x1E)">RS</span>';
+      } else if (code === 0x04) {
+        html += '<span class="ctrl-char" title="EOT (0x04)">EOT</span>';
+      } else {
+        // Escape HTML special characters
+        html += ch.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      }
+    }
+    el.innerHTML = html;
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('error-msg');
+    el.textContent = msg;
+    el.classList.add('visible');
+  }
+
+  function clearError() {
+    const el = document.getElementById('error-msg');
+    el.textContent = '';
+    el.classList.remove('visible');
+  }
+
+  function generate() {
+    clearError();
+
+    const fields = {
+      matnr:    document.getElementById('f-matnr').value.trim(),
+      revision: document.getElementById('f-revision').value.trim(),
+      serial:   document.getElementById('f-serial').value.trim(),
+      supplier: document.getElementById('f-supplier').value.trim(),
+      charge:   document.getElementById('f-charge').value.trim(),
+      ident:    document.getElementById('f-ident').value.trim(),
+      order:    document.getElementById('f-order').value.trim(),
+    };
+
+    let encoded;
+    try {
+      encoded = buildISO15434(fields);
+    } catch (err) {
+      showError(err.message);
+      return;
+    }
+
+    rawEncodedString = encoded;
+
+    const canvas = document.getElementById('barcode-canvas');
+
+    try {
+      bwipjs.toCanvas(canvas, {
+        bcid:        'datamatrix',
+        text:        encoded,
+        scale:        4,
+        padding:      8,
+        backgroundcolor: 'ffffff',
+      });
+    } catch (err) {
+      showError('Failed to render Data Matrix code: ' + err.message);
+      return;
+    }
+
+    renderDisplayString(encoded);
+
+    const resultCard = document.getElementById('result-card');
+    resultCard.classList.add('visible');
+    resultCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function copyRaw() {
+    if (!rawEncodedString) return;
+    navigator.clipboard.writeText(rawEncodedString).then(() => {
+      const fb = document.getElementById('copy-feedback');
+      fb.classList.add('show');
+      setTimeout(() => fb.classList.remove('show'), 2000);
+    }).catch(() => {
+      // Fallback for environments without clipboard API
+      const ta = document.createElement('textarea');
+      ta.value = rawEncodedString;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      const fb = document.getElementById('copy-feedback');
+      fb.classList.add('show');
+      setTimeout(() => fb.classList.remove('show'), 2000);
+    });
+  }
+
+  function downloadPNG() {
+    const canvas = document.getElementById('barcode-canvas');
+    if (!canvas.width) return;
+    const link = document.createElement('a');
+    link.download = 'datamatrix.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  }
+
+  // Allow Enter key to trigger generation
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') generate();
+  });
+</script>
+</body>
+</html>
