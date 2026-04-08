@@ -1,4 +1,4 @@
-# DataMatrixVDAGenerator
+# DataMatrix VDA Generator
 
 A static webpage for generating ISO 15434 compliant Data Matrix (ECC 200) codes for VDA labels.
 
