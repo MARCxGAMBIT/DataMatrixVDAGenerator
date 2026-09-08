@@ -247,6 +247,92 @@
     .alert-error.visible {
       display: block;
     }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 4px;
+    }
+
+    .btn-secondary {
+      flex: 1 1 200px;
+      padding: 12px;
+      background: #e3eaf5;
+      color: #0d47a1;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-secondary:hover {
+      background: #c7d8f5;
+    }
+
+    #scanner-area {
+      display: none;
+      margin-top: 16px;
+    }
+
+    #scanner-area.visible {
+      display: block;
+    }
+
+    #scanner-video {
+      width: 100%;
+      max-height: 340px;
+      background: #000;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+
+    .hint {
+      font-size: 0.82rem;
+      color: #777;
+      margin: 8px 0 0;
+    }
+
+    .verdict {
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      margin-bottom: 16px;
+    }
+
+    .verdict.ok {
+      background: #e8f5e9;
+      border: 1px solid #a5d6a7;
+      color: #1b5e20;
+    }
+
+    .verdict.fail {
+      background: #fce4ec;
+      border: 1px solid #f48fb1;
+      color: #880e4f;
+    }
+
+    .log-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      font-size: 0.86rem;
+    }
+
+    .log-list li {
+      padding: 7px 10px;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      font-family: monospace;
+      word-break: break-word;
+    }
+
+    .log-list li.error   { background: #fce4ec; color: #880e4f; }
+    .log-list li.warning { background: #fff8e1; color: #7a5300; }
+    .log-list li.info    { background: #f4f6fb; color: #333; }
   </style>
 </head>
 <body>
@@ -308,6 +394,40 @@
     </div>
   </div>
 
+  <!-- Validator -->
+  <div class="card">
+    <h2>Validate a Data Matrix Code</h2>
+    <p class="hint" style="margin-top:-8px;margin-bottom:16px;">
+      Scan a printed label with your camera or select an image file. The decoded content is
+      checked against the ISO&nbsp;15434 structure (start/end sequence, segment order,
+      separators and data identifier prefixes).
+    </p>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="startScan()" id="btn-scan">Scan with camera</button>
+      <button class="btn-secondary" onclick="document.getElementById('file-input').click()">Select image file</button>
+    </div>
+    <input type="file" id="file-input" accept="image/*" style="display:none" onchange="validateFromFile(event)" />
+
+    <div id="scanner-area">
+      <video id="scanner-video" playsinline muted></video>
+      <div class="btn-row">
+        <button class="btn-secondary" onclick="stopScan()">Stop camera</button>
+      </div>
+    </div>
+
+    <div id="validate-error" class="alert-error" style="margin-top:16px;"></div>
+  </div>
+
+  <!-- Validation result -->
+  <div class="card result-area" id="validation-card">
+    <h2>Validation Result</h2>
+    <div id="validation-verdict" class="verdict"></div>
+    <div class="encoded-label">Decoded content:</div>
+    <div class="encoded-string" id="decoded-display"></div>
+    <div class="encoded-label" style="margin-top:18px;">Detailed log:</div>
+    <ul class="log-list" id="validation-log"></ul>
+  </div>
+
   <!-- Reference table -->
   <div class="card">
     <h2>ISO 15434 Structure Reference</h2>
@@ -342,6 +462,8 @@
 
 <!-- bwip-js: full-featured barcode / data matrix renderer -->
 <script src="bwip-js-min.js"></script>
+<!-- ZXing: Data Matrix decoding for the validator -->
+<script src="zxing-min.js"></script>
 <script>
   // Special control characters as per ISO 15434
   const GS  = '\x1D'; // ASCII 29 – Group Separator
@@ -379,8 +501,8 @@
    * Render the encoded string in the display element with highlighted
    * control characters so users can visually verify the structure.
    */
-  function renderDisplayString(encoded) {
-    const el = document.getElementById('encoded-display');
+  function renderDisplayString(encoded, elementId) {
+    const el = document.getElementById(elementId || 'encoded-display');
     let html = '';
     for (const ch of encoded) {
       const code = ch.charCodeAt(0);
@@ -390,6 +512,9 @@
         html += '<span class="ctrl-char" title="RS (0x1E)">RS</span>';
       } else if (code === 0x04) {
         html += '<span class="ctrl-char" title="EOT (0x04)">EOT</span>';
+      } else if (code < 0x20 || code === 0x7F) {
+        const hex = code.toString(16).toUpperCase().padStart(2, '0');
+        html += '<span class="ctrl-char" title="Control character 0x' + hex + '">0x' + hex + '</span>';
       } else {
         // Escape HTML special characters
         html += ch.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -490,6 +615,268 @@
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Enter') generate();
   });
+
+  /* ------------------------------------------------------------------ *
+   *  Validator
+   * ------------------------------------------------------------------ */
+
+  // Known VDA data identifiers in their expected order of appearance
+  const KNOWN_DIS = [
+    { di: 'P',  label: 'Part Number (Materialnummer)' },
+    { di: '2P', label: 'Revision' },
+    { di: 'S',  label: 'Serial Number' },
+    { di: 'V',  label: 'Supplier' },
+    { di: '1T', label: 'Charge / Lot Number' },
+    { di: '1P', label: 'Ident Number' },
+    { di: 'K',  label: 'Order Number' },
+  ];
+
+  const HEADER = '[)>' + RS + '06';
+
+  /**
+   * Validate a decoded string against the ISO 15434 (format 06) structure.
+   * Returns { valid, log: [{ level, message }] } where level is
+   * 'error' | 'warning' | 'info'.
+   */
+  function validateISO15434(text) {
+    const log = [];
+    const error   = (m) => log.push({ level: 'error',   message: m });
+    const warning = (m) => log.push({ level: 'warning', message: m });
+    const info    = (m) => log.push({ level: 'info',    message: m });
+
+    if (!text) {
+      error('The code is empty – nothing to validate.');
+      return { valid: false, log };
+    }
+
+    let body = text;
+
+    // --- Start sequence -------------------------------------------------
+    if (body.startsWith(HEADER)) {
+      info('Start sequence "[)>" + RS + "06" found.');
+      body = body.slice(HEADER.length);
+    } else if (body.startsWith('[)>' + RS)) {
+      const format = body.slice(4, 6);
+      error('Unsupported format indicator "' + format + '" – VDA labels must use "06".');
+      body = body.slice(6);
+    } else if (body.startsWith('[)>')) {
+      error('Missing RS (0x1E) after the "[)>" message header.');
+      body = body.replace(/^\[\)>0?6?/, '');
+    } else {
+      error('Missing start sequence – the code must begin with "[)>" + RS + "06".');
+    }
+
+    // --- End sequence ---------------------------------------------------
+    if (body.endsWith(RS + EOT)) {
+      info('End sequence RS + EOT found.');
+      body = body.slice(0, -2);
+    } else if (body.endsWith(EOT)) {
+      error('Missing RS (0x1E) before the trailing EOT (0x04) of the end sequence.');
+      body = body.slice(0, -1);
+    } else if (body.endsWith(RS)) {
+      error('Missing EOT (0x04) at the end of the message.');
+      body = body.slice(0, -1);
+    } else {
+      error('Missing end sequence – the code must end with RS + EOT.');
+    }
+
+    // --- Separator between header and first segment ---------------------
+    if (body.startsWith(GS)) {
+      body = body.slice(1);
+    } else if (body.length > 0) {
+      error('Missing GS (0x1D) separator between the header "06" and the first data segment.');
+    }
+
+    if (body.length === 0) {
+      error('The message does not contain any data segments.');
+      return { valid: false, log };
+    }
+
+    // --- Segments -------------------------------------------------------
+    const segments = body.split(GS);
+    info('Found ' + segments.length + ' data segment(s).');
+
+    const seen = {};
+    let lastKnownIndex = -1;
+
+    segments.forEach((segment, i) => {
+      const position = 'Segment ' + (i + 1);
+
+      if (segment === '') {
+        error(position + ': empty segment – two GS separators follow each other or a value is missing.');
+        return;
+      }
+
+      // Illegal control characters inside a segment
+      const illegal = [...segment].filter(ch => {
+        const c = ch.charCodeAt(0);
+        return c < 0x20 || c === 0x7F;
+      });
+      if (illegal.length) {
+        const codes = illegal.map(ch => '0x' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
+        error(position + ': contains control character(s) ' + [...new Set(codes)].join(', ') +
+              ' that are not allowed inside a data segment.');
+      }
+
+      const match = /^(\d*[A-Z])/.exec(segment);
+      if (!match) {
+        error(position + ': "' + printable(segment) + '" does not start with a valid data identifier ' +
+              '(one uppercase letter, optionally preceded by digits).');
+        return;
+      }
+
+      const di = match[1];
+      const value = segment.slice(di.length);
+      const known = KNOWN_DIS.findIndex(k => k.di === di);
+
+      if (value === '') {
+        error(position + ': data identifier "' + di + '" has no value.');
+      }
+
+      if (known === -1) {
+        warning(position + ': data identifier "' + di + '" is not one of the VDA identifiers ' +
+                KNOWN_DIS.map(k => k.di).join(', ') + '.');
+      } else {
+        info(position + ': "' + di + '" – ' + KNOWN_DIS[known].label + ' = "' + printable(value) + '".');
+        if (known < lastKnownIndex) {
+          warning(position + ': data identifier "' + di + '" appears after "' +
+                  KNOWN_DIS[lastKnownIndex].di + '" – the recommended order is ' +
+                  KNOWN_DIS.map(k => k.di).join(' → ') + '.');
+        }
+        lastKnownIndex = Math.max(lastKnownIndex, known);
+      }
+
+      if (seen[di]) {
+        error(position + ': data identifier "' + di + '" is used more than once.');
+      }
+      seen[di] = true;
+    });
+
+    const valid = !log.some(entry => entry.level === 'error');
+    return { valid, log };
+  }
+
+  /** Replace control characters with readable placeholders for log output. */
+  function printable(str) {
+    return str.replace(/[\x00-\x1F\x7F]/g, ch =>
+      '<0x' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0') + '>');
+  }
+
+  function showValidationResult(text) {
+    const result = validateISO15434(text);
+
+    renderDisplayString(text, 'decoded-display');
+
+    const verdict = document.getElementById('validation-verdict');
+    const warnings = result.log.filter(e => e.level === 'warning').length;
+    const errors   = result.log.filter(e => e.level === 'error').length;
+
+    if (result.valid) {
+      verdict.className = 'verdict ok';
+      verdict.textContent = warnings
+        ? '✔ Valid ISO 15434 code – with ' + warnings + ' warning(s), see log below.'
+        : '✔ Valid ISO 15434 code – no problems found.';
+    } else {
+      verdict.className = 'verdict fail';
+      verdict.textContent = '✖ Invalid ISO 15434 code – ' + errors + ' error(s) found, see log below.';
+    }
+
+    const list = document.getElementById('validation-log');
+    list.innerHTML = '';
+    result.log.forEach(entry => {
+      const li = document.createElement('li');
+      li.className = entry.level;
+      li.textContent = entry.level.toUpperCase() + ': ' + entry.message;
+      list.appendChild(li);
+    });
+
+    const card = document.getElementById('validation-card');
+    card.classList.add('visible');
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function showValidateError(msg) {
+    const el = document.getElementById('validate-error');
+    el.textContent = msg;
+    el.classList.add('visible');
+  }
+
+  function clearValidateError() {
+    const el = document.getElementById('validate-error');
+    el.textContent = '';
+    el.classList.remove('visible');
+  }
+
+  /** Lazily created ZXing reader used for both camera and file input. */
+  let codeReader = null;
+  let scanning = false;
+
+  function getReader() {
+    if (!codeReader) codeReader = new ZXing.BrowserDatamatrixCodeReader();
+    return codeReader;
+  }
+
+  function validateFromFile(event) {
+    clearValidateError();
+    const file = event.target.files && event.target.files[0];
+    // Reset so selecting the same file again re-triggers the change event
+    event.target.value = '';
+    if (!file) return;
+
+    const url = URL.createObjectURL(file);
+    getReader().decodeFromImageUrl(url)
+      .then(result => showValidationResult(result.getText()))
+      .catch(() => showValidateError(
+        'No Data Matrix code could be read from the selected image. ' +
+        'Make sure the code is fully visible, sharp and not too small.'))
+      .then(() => URL.revokeObjectURL(url));
+  }
+
+  function startScan() {
+    clearValidateError();
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showValidateError('Camera access is not available in this browser. ' +
+                        'Please use "Select image file" instead.');
+      return;
+    }
+
+    if (scanning) return;
+    scanning = true;
+    document.getElementById('scanner-area').classList.add('visible');
+
+    getReader().decodeFromConstraints(
+      { video: { facingMode: 'environment' } },
+      'scanner-video',
+      (result, err) => {
+        if (result) {
+          stopScan();
+          showValidationResult(result.getText());
+        } else if (err && !(err instanceof ZXing.NotFoundException)) {
+          // Checksum / format errors simply mean: keep trying with the next frame
+          if (!(err instanceof ZXing.ChecksumException) && !(err instanceof ZXing.FormatException)) {
+            stopScan();
+            showValidateError('Scanning failed: ' + err.message);
+          }
+        }
+      }
+    ).catch(err => {
+      scanning = false;
+      document.getElementById('scanner-area').classList.remove('visible');
+      showValidateError('Could not start the camera: ' + err.message);
+    });
+  }
+
+  function stopScan() {
+    if (codeReader) {
+      codeReader.reset();
+      // A reset reader keeps references to the destroyed video element,
+      // so create a fresh one for the next scan.
+      codeReader = null;
+    }
+    scanning = false;
+    document.getElementById('scanner-area').classList.remove('visible');
+  }
 </script>
 </body>
 </html>
